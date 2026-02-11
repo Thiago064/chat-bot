@@ -1,18 +1,21 @@
 {
   "name": "whatsapp-lead-bot",
   "version": "1.0.0",
-  "description": "Bot de triagem de contatos no WhatsApp usando WhatsApp Cloud API",
+  "description": "Bot de triagem de contatos no WhatsApp com conexão via Cloud API ou QRCode",
   "main": "src/index.js",
   "type": "commonjs",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "check": "node --check src/index.js",
-    "start:local": "LOCAL_DEV=true node src/index.js"
+    "start:cloud": "WHATSAPP_CONNECTION_MODE=cloud node src/index.js",
+    "start:qrcode": "WHATSAPP_CONNECTION_MODE=qrcode node src/index.js"
   },
   "dependencies": {
     "axios": "^1.7.9",
     "dotenv": "^16.4.7",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0"
   }
 }

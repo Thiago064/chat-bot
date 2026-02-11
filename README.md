@@ -13,8 +13,7 @@ Bot para WhatsApp com foco em triagem de clientes em potencial. Quando recebe um
 ## Requisitos
 
 - Node.js 18+
-- Conta da Meta com WhatsApp Cloud API configurada
-- `phone_number_id` e `access_token`
+- NPM
 
 ## Configuração
 
@@ -30,43 +29,40 @@ npm install
 cp .env.example .env
 ```
 
-3. Preencha as variáveis no `.env`:
+3. Configure o modo de conexão no `.env`:
+
+- `WHATSAPP_CONNECTION_MODE=cloud` para usar WhatsApp Cloud API
+- `WHATSAPP_CONNECTION_MODE=qrcode` para conectar via QRCode (WhatsApp Web)
+
+### Variáveis para modo Cloud API
+
+Necessárias apenas quando `WHATSAPP_CONNECTION_MODE=cloud`:
 
 - `WHATSAPP_VERIFY_TOKEN`: token para validação do webhook
 - `WHATSAPP_ACCESS_TOKEN`: token da Cloud API
 - `WHATSAPP_PHONE_NUMBER_ID`: ID do número de WhatsApp na Meta
-- `PORT`: porta local (opcional, padrão `3000`)
 
 ## Executando
 
+### Modo Cloud API
+
 ```bash
-npm start
+npm run start:cloud
 ```
+
+### Modo QRCode (conectar WhatsApp direto no bot)
+
+```bash
+npm run start:qrcode
+```
+
+Ao iniciar em modo QRCode, o terminal exibirá um QRCode. Escaneie com o WhatsApp para conectar.
 
 ## Endpoints
 
-- `GET /webhook`: verificação do webhook pela Meta
-- `POST /webhook`: recebimento das mensagens
-- `GET /health`: healthcheck
-
-## Rodando em servidor local
-
-Para executar o bot em servidor local sem depender de credenciais da Cloud API durante desenvolvimento:
-
-```bash
-npm run start:local
-```
-
-Nesse modo (`LOCAL_DEV=true`):
-
-- o servidor sobe normalmente na `PORT` (padrão `3000`);
-- respostas do bot são simuladas e registradas no console;
-- o endpoint `GET /health` retorna `mode: "local-dev"`.
-
-## Uso direto no WhatsApp
-
-Depois de configurar o webhook da Cloud API, o bot funciona somente com mensagens enviadas direto para o número de WhatsApp conectado na Meta.
-Não é necessário painel adicional: basta o cliente mandar mensagem no WhatsApp que o fluxo de triagem inicia automaticamente.
+- `GET /webhook`: verificação do webhook pela Meta (somente no modo cloud)
+- `POST /webhook`: recebimento das mensagens (somente no modo cloud)
+- `GET /health`: healthcheck (retorna o modo ativo: `cloud` ou `qrcode`)
 
 ## Fluxo de conversa
 

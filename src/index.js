@@ -9,24 +9,27 @@ app.use(express.json());
 
 const {
   PORT = 3000,
+  WHATSAPP_CONNECTION_MODE = 'cloud',
   WHATSAPP_VERIFY_TOKEN,
   WHATSAPP_ACCESS_TOKEN,
   WHATSAPP_PHONE_NUMBER_ID,
-  LOCAL_DEV = 'false',
 } = process.env;
 
-const isLocalDev = LOCAL_DEV === 'true';
+const isCloudMode = WHATSAPP_CONNECTION_MODE === 'cloud';
+const isQrCodeMode = WHATSAPP_CONNECTION_MODE === 'qrcode';
 
-if (!isLocalDev && (!WHATSAPP_VERIFY_TOKEN || !WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID)) {
-  console.error('Variáveis de ambiente faltando. Confira o arquivo .env.example');
+if (!isCloudMode && !isQrCodeMode) {
+  console.error('WHATSAPP_CONNECTION_MODE inválido. Use "cloud" ou "qrcode".');
   process.exit(1);
 }
 
-if (isLocalDev) {
-  console.warn('Modo LOCAL_DEV ativo: mensagens serão simuladas no servidor local.');
+if (isCloudMode && (!WHATSAPP_VERIFY_TOKEN || !WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID)) {
+  console.error('Variáveis de ambiente faltando para modo cloud. Confira o arquivo .env.example');
+  process.exit(1);
 }
 
 const sessions = new Map();
+let qrClient = null;
 
 const PURPOSES = {
   '1': 'Projeto em andamento',
@@ -83,8 +86,13 @@ function buildClosingMessage() {
 }
 
 async function sendWhatsAppMessage(to, message) {
-  if (isLocalDev) {
-    console.log('[LOCAL_DEV] Mensagem simulada', { to, message });
+  if (isQrCodeMode) {
+    if (!qrClient) {
+      throw new Error('Cliente WhatsApp QRCode ainda não inicializado.');
+    }
+
+    const chatId = to.includes('@') ? to : `${to}@c.us`;
+    await qrClient.sendMessage(chatId, message);
     return;
   }
 
@@ -118,13 +126,9 @@ function setSession(waId, data) {
   sessions.set(waId, { ...getSession(waId), ...data });
 }
 
-async function handleIncomingMessage(messageData, contact = {}) {
-  const waId = messageData.from;
-  const text = normalizeIncomingText(messageData?.text?.body);
-
+async function processConversation(waId, text, profileName = '') {
   if (!waId || !text) return;
 
-  const profileName = contact?.profile?.name || '';
   const session = getSession(waId);
 
   if (text === 'menu' || session.state === 'NEW') {
@@ -145,7 +149,7 @@ async function handleIncomingMessage(messageData, contact = {}) {
   }
 
   if (session.state === 'AWAITING_DETAILS') {
-    setSession(waId, { details: messageData?.text?.body, state: 'DONE' });
+    setSession(waId, { details: text, state: 'DONE' });
     await sendWhatsAppMessage(waId, buildClosingMessage());
     return;
   }
@@ -153,14 +157,61 @@ async function handleIncomingMessage(messageData, contact = {}) {
   await sendWhatsAppMessage(waId, 'Se quiser iniciar um novo atendimento, envie *menu*.');
 }
 
+async function handleIncomingCloudMessage(messageData, contact = {}) {
+  const waId = messageData.from;
+  const text = normalizeIncomingText(messageData?.text?.body);
+  const profileName = contact?.profile?.name || '';
+
+  await processConversation(waId, text, profileName);
+}
+
+function initQrCodeMode() {
+  const { Client, LocalAuth } = require('whatsapp-web.js');
+  const qrcode = require('qrcode-terminal');
+
+  qrClient = new Client({
+    authStrategy: new LocalAuth({ clientId: 'chat-bot' }),
+    puppeteer: {
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    },
+  });
+
+  qrClient.on('qr', (qr) => {
+    console.log('Escaneie o QRCode abaixo com seu WhatsApp para conectar o bot:');
+    qrcode.generate(qr, { small: true });
+  });
+
+  qrClient.on('ready', () => {
+    console.log('WhatsApp conectado com sucesso via QRCode.');
+  });
+
+  qrClient.on('message', async (message) => {
+    try {
+      if (message.fromMe || message.from.includes('@g.us')) {
+        return;
+      }
+
+      const waId = message.from.replace('@c.us', '');
+      const text = normalizeIncomingText(message.body || '');
+      const profileName = message._data?.notifyName || message._data?.pushname || '';
+
+      await processConversation(waId, text, profileName);
+    } catch (error) {
+      console.error('Erro ao processar mensagem em modo qrcode:', error.message);
+    }
+  });
+
+  qrClient.initialize();
+}
+
 app.get('/webhook', (req, res) => {
+  if (isQrCodeMode) {
+    return res.status(200).send('Modo QRCode ativo: endpoint webhook desabilitado.');
+  }
+
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
-
-  if (isLocalDev && mode === 'subscribe') {
-    return res.status(200).send(challenge || 'local-dev');
-  }
 
   if (mode === 'subscribe' && token === WHATSAPP_VERIFY_TOKEN) {
     return res.status(200).send(challenge);
@@ -171,6 +222,10 @@ app.get('/webhook', (req, res) => {
 
 app.post('/webhook', async (req, res) => {
   try {
+    if (isQrCodeMode) {
+      return res.status(200).json({ ok: true, message: 'Modo QRCode ativo. Webhook ignorado.' });
+    }
+
     const entries = req.body?.entry || [];
 
     for (const entry of entries) {
@@ -191,7 +246,7 @@ app.post('/webhook', async (req, res) => {
           }
 
           const contact = contactsByWaId.get(message.from) || value.contacts?.[0];
-          await handleIncomingMessage(message, contact);
+          await handleIncomingCloudMessage(message, contact);
         }
       }
     }
@@ -204,9 +259,16 @@ app.post('/webhook', async (req, res) => {
 });
 
 app.get('/health', (_, res) => {
-  res.status(200).json({ status: 'ok', mode: isLocalDev ? 'local-dev' : 'whatsapp-cloud' });
+  res.status(200).json({
+    status: 'ok',
+    mode: isQrCodeMode ? 'qrcode' : 'cloud',
+  });
 });
 
 app.listen(PORT, () => {
-  console.log(`Bot de WhatsApp ativo na porta ${PORT}`);
+  console.log(`Bot de WhatsApp ativo na porta ${PORT} (modo: ${WHATSAPP_CONNECTION_MODE})`);
+
+  if (isQrCodeMode) {
+    initQrCodeMode();
+  }
 });
