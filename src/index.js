@@ -163,10 +163,14 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    const message = value.messages[0];
-    const contact = value.contacts?.[0];
+    const contactsByWaId = new Map((value.contacts || []).map((contact) => [contact.wa_id, contact]));
 
-    if (message.type === 'text') {
+    for (const message of value.messages) {
+      if (message.type !== 'text') {
+        continue;
+      }
+
+      const contact = contactsByWaId.get(message.from) || value.contacts?.[0];
       await handleIncomingMessage(message, contact);
     }
 
