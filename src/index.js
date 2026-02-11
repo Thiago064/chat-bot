@@ -12,11 +12,18 @@ const {
   WHATSAPP_VERIFY_TOKEN,
   WHATSAPP_ACCESS_TOKEN,
   WHATSAPP_PHONE_NUMBER_ID,
+  LOCAL_DEV = 'false',
 } = process.env;
 
-if (!WHATSAPP_VERIFY_TOKEN || !WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
+const isLocalDev = LOCAL_DEV === 'true';
+
+if (!isLocalDev && (!WHATSAPP_VERIFY_TOKEN || !WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID)) {
   console.error('Variáveis de ambiente faltando. Confira o arquivo .env.example');
   process.exit(1);
+}
+
+if (isLocalDev) {
+  console.warn('Modo LOCAL_DEV ativo: mensagens serão simuladas no servidor local.');
 }
 
 const sessions = new Map();
@@ -76,6 +83,11 @@ function buildClosingMessage() {
 }
 
 async function sendWhatsAppMessage(to, message) {
+  if (isLocalDev) {
+    console.log('[LOCAL_DEV] Mensagem simulada', { to, message });
+    return;
+  }
+
   const url = `https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
 
   await axios.post(
@@ -146,6 +158,10 @@ app.get('/webhook', (req, res) => {
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
+  if (isLocalDev && mode === 'subscribe') {
+    return res.status(200).send(challenge || 'local-dev');
+  }
+
   if (mode === 'subscribe' && token === WHATSAPP_VERIFY_TOKEN) {
     return res.status(200).send(challenge);
   }
@@ -155,19 +171,29 @@ app.get('/webhook', (req, res) => {
 
 app.post('/webhook', async (req, res) => {
   try {
-    const entry = req.body?.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const value = changes?.value;
+    const entries = req.body?.entry || [];
 
-    if (!value?.messages?.length) {
-      return res.sendStatus(200);
-    }
+    for (const entry of entries) {
+      const changes = entry?.changes || [];
 
-    const message = value.messages[0];
-    const contact = value.contacts?.[0];
+      for (const change of changes) {
+        const value = change?.value;
 
-    if (message.type === 'text') {
-      await handleIncomingMessage(message, contact);
+        if (!value?.messages?.length) {
+          continue;
+        }
+
+        const contactsByWaId = new Map((value.contacts || []).map((contact) => [contact.wa_id, contact]));
+
+        for (const message of value.messages) {
+          if (message.type !== 'text') {
+            continue;
+          }
+
+          const contact = contactsByWaId.get(message.from) || value.contacts?.[0];
+          await handleIncomingMessage(message, contact);
+        }
+      }
     }
 
     return res.sendStatus(200);
@@ -178,7 +204,7 @@ app.post('/webhook', async (req, res) => {
 });
 
 app.get('/health', (_, res) => {
-  res.status(200).json({ status: 'ok' });
+  res.status(200).json({ status: 'ok', mode: isLocalDev ? 'local-dev' : 'whatsapp-cloud' });
 });
 
 app.listen(PORT, () => {

@@ -49,6 +49,25 @@ npm start
 - `POST /webhook`: recebimento das mensagens
 - `GET /health`: healthcheck
 
+## Rodando em servidor local
+
+Para executar o bot em servidor local sem depender de credenciais da Cloud API durante desenvolvimento:
+
+```bash
+npm run start:local
+```
+
+Nesse modo (`LOCAL_DEV=true`):
+
+- o servidor sobe normalmente na `PORT` (padrão `3000`);
+- respostas do bot são simuladas e registradas no console;
+- o endpoint `GET /health` retorna `mode: "local-dev"`.
+
+## Uso direto no WhatsApp
+
+Depois de configurar o webhook da Cloud API, o bot funciona somente com mensagens enviadas direto para o número de WhatsApp conectado na Meta.
+Não é necessário painel adicional: basta o cliente mandar mensagem no WhatsApp que o fluxo de triagem inicia automaticamente.
+
 ## Fluxo de conversa
 
 - Cliente envia qualquer mensagem
