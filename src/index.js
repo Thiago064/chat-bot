@@ -155,23 +155,29 @@ app.get('/webhook', (req, res) => {
 
 app.post('/webhook', async (req, res) => {
   try {
-    const entry = req.body?.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const value = changes?.value;
+    const entries = req.body?.entry || [];
 
-    if (!value?.messages?.length) {
-      return res.sendStatus(200);
-    }
+    for (const entry of entries) {
+      const changes = entry?.changes || [];
 
-    const contactsByWaId = new Map((value.contacts || []).map((contact) => [contact.wa_id, contact]));
+      for (const change of changes) {
+        const value = change?.value;
 
-    for (const message of value.messages) {
-      if (message.type !== 'text') {
-        continue;
+        if (!value?.messages?.length) {
+          continue;
+        }
+
+        const contactsByWaId = new Map((value.contacts || []).map((contact) => [contact.wa_id, contact]));
+
+        for (const message of value.messages) {
+          if (message.type !== 'text') {
+            continue;
+          }
+
+          const contact = contactsByWaId.get(message.from) || value.contacts?.[0];
+          await handleIncomingMessage(message, contact);
+        }
       }
-
-      const contact = contactsByWaId.get(message.from) || value.contacts?.[0];
-      await handleIncomingMessage(message, contact);
     }
 
     return res.sendStatus(200);

@@ -49,6 +49,11 @@ npm start
 - `POST /webhook`: recebimento das mensagens
 - `GET /health`: healthcheck
 
+## Uso direto no WhatsApp
+
+Depois de configurar o webhook da Cloud API, o bot funciona somente com mensagens enviadas direto para o número de WhatsApp conectado na Meta.
+Não é necessário painel adicional: basta o cliente mandar mensagem no WhatsApp que o fluxo de triagem inicia automaticamente.
+
 ## Fluxo de conversa
 
 - Cliente envia qualquer mensagem
