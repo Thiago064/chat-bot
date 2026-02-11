@@ -1,0 +1,186 @@
+const express = require('express');
+const axios = require('axios');
+const dotenv = require('dotenv');
+
+dotenv.config();
+
+const app = express();
+app.use(express.json());
+
+const {
+  PORT = 3000,
+  WHATSAPP_VERIFY_TOKEN,
+  WHATSAPP_ACCESS_TOKEN,
+  WHATSAPP_PHONE_NUMBER_ID,
+} = process.env;
+
+if (!WHATSAPP_VERIFY_TOKEN || !WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
+  console.error('Variáveis de ambiente faltando. Confira o arquivo .env.example');
+  process.exit(1);
+}
+
+const sessions = new Map();
+
+const PURPOSES = {
+  '1': 'Projeto em andamento',
+  '2': 'Agendar reunião',
+  '3': 'Solicitar orçamento',
+};
+
+function buildMainMenu(name = '') {
+  const greetingName = name ? `, ${name}` : '';
+
+  return [
+    `Olá${greetingName}! 👋`,
+    'Obrigado por entrar em contato com a nossa equipe.',
+    'Para agilizar seu atendimento, selecione uma opção:',
+    '',
+    '1️⃣ Projeto em andamento',
+    '2️⃣ Agendar reunião',
+    '3️⃣ Solicitar orçamento',
+    '',
+    'Responda com *1*, *2* ou *3*.',
+  ].join('\n');
+}
+
+function buildFollowUpByPurpose(option) {
+  switch (option) {
+    case '1':
+      return [
+        'Perfeito! Vamos tratar do seu projeto em andamento. 🏗️',
+        'Por favor, envie o número do projeto e um resumo da sua dúvida para priorizarmos o atendimento.',
+      ].join('\n');
+    case '2':
+      return [
+        'Ótimo! Vamos organizar sua reunião. 📅',
+        'Informe, por favor, seu melhor dia/horário e o assunto principal da reunião.',
+      ].join('\n');
+    case '3':
+      return [
+        'Excelente! Vamos iniciar seu orçamento. 💰',
+        'Descreva brevemente o escopo do projeto e a cidade/estado de execução.',
+      ].join('\n');
+    default:
+      return 'Não entendi sua opção. Responda com *1*, *2* ou *3*.';
+  }
+}
+
+function buildClosingMessage() {
+  return [
+    'Recebido! ✅',
+    'Nossa triagem foi concluída e já encaminhamos as informações.',
+    'Por favor, aguarde o contato do nosso engenheiro responsável.',
+    '',
+    'Se quiser reiniciar o atendimento, envie *menu*.',
+  ].join('\n');
+}
+
+async function sendWhatsAppMessage(to, message) {
+  const url = `https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
+
+  await axios.post(
+    url,
+    {
+      messaging_product: 'whatsapp',
+      to,
+      text: { body: message },
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+}
+
+function normalizeIncomingText(text = '') {
+  return text.trim().toLowerCase();
+}
+
+function getSession(waId) {
+  return sessions.get(waId) || { state: 'NEW' };
+}
+
+function setSession(waId, data) {
+  sessions.set(waId, { ...getSession(waId), ...data });
+}
+
+async function handleIncomingMessage(messageData, contact = {}) {
+  const waId = messageData.from;
+  const text = normalizeIncomingText(messageData?.text?.body);
+
+  if (!waId || !text) return;
+
+  const profileName = contact?.profile?.name || '';
+  const session = getSession(waId);
+
+  if (text === 'menu' || session.state === 'NEW') {
+    await sendWhatsAppMessage(waId, buildMainMenu(profileName));
+    setSession(waId, { state: 'AWAITING_PURPOSE' });
+    return;
+  }
+
+  if (session.state === 'AWAITING_PURPOSE') {
+    if (!PURPOSES[text]) {
+      await sendWhatsAppMessage(waId, 'Opção inválida. Envie *1*, *2* ou *3* para continuar.');
+      return;
+    }
+
+    await sendWhatsAppMessage(waId, buildFollowUpByPurpose(text));
+    setSession(waId, { state: 'AWAITING_DETAILS', purpose: PURPOSES[text] });
+    return;
+  }
+
+  if (session.state === 'AWAITING_DETAILS') {
+    setSession(waId, { details: messageData?.text?.body, state: 'DONE' });
+    await sendWhatsAppMessage(waId, buildClosingMessage());
+    return;
+  }
+
+  await sendWhatsAppMessage(waId, 'Se quiser iniciar um novo atendimento, envie *menu*.');
+}
+
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === WHATSAPP_VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+
+  return res.sendStatus(403);
+});
+
+app.post('/webhook', async (req, res) => {
+  try {
+    const entry = req.body?.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const value = changes?.value;
+
+    if (!value?.messages?.length) {
+      return res.sendStatus(200);
+    }
+
+    const message = value.messages[0];
+    const contact = value.contacts?.[0];
+
+    if (message.type === 'text') {
+      await handleIncomingMessage(message, contact);
+    }
+
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error('Erro ao processar webhook:', error?.response?.data || error.message);
+    return res.sendStatus(500);
+  }
+});
+
+app.get('/health', (_, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
+app.listen(PORT, () => {
+  console.log(`Bot de WhatsApp ativo na porta ${PORT}`);
+});
