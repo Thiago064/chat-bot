@@ -43,6 +43,8 @@ npm run start:qrcode
 
 Ao iniciar, o terminal exibirá um QRCode. Escaneie com o WhatsApp para conectar o bot.
 
+> Observação: os scripts usam `--no-deprecation` para ocultar o aviso `[DEP0040] punycode`, que é emitido por dependência interna do ecossistema do WhatsApp Web no Node.js atual.
+
 ## Endpoints
 
 - `GET /health`: healthcheck
