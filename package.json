@@ -8,7 +8,8 @@
     "start": "node --no-deprecation src/index.js",
     "dev": "node --no-deprecation --watch src/index.js",
     "check": "node --check src/index.js",
-    "start:qrcode": "node --no-deprecation src/index.js"
+    "start:qrcode": "node --no-deprecation src/index.js",
+    "setup:chrome": "npx puppeteer browsers install chrome"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

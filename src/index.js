@@ -8,7 +8,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-const { PORT = 3000 } = process.env;
+const { PORT = 3000, CHROME_EXECUTABLE_PATH } = process.env;
 
 const sessions = new Map();
 
@@ -81,6 +81,7 @@ function setSession(waId, data) {
 const qrClient = new Client({
   authStrategy: new LocalAuth({ clientId: 'chat-bot' }),
   puppeteer: {
+    executablePath: CHROME_EXECUTABLE_PATH || undefined,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
   },
 });
@@ -163,5 +164,17 @@ app.get('/health', (_, res) => {
 
 app.listen(PORT, () => {
   console.log(`Bot de WhatsApp ativo na porta ${PORT} (modo: qrcode)`);
-  qrClient.initialize();
+
+  qrClient.initialize().catch((error) => {
+    const isChromeMissing = error?.message?.includes('Could not find Chrome');
+
+    if (isChromeMissing) {
+      console.error('Chrome não encontrado para o whatsapp-web.js.');
+      console.error('Execute: npx puppeteer browsers install chrome');
+      console.error('Ou defina CHROME_EXECUTABLE_PATH no .env com o caminho do chrome.exe.');
+    }
+
+    console.error('Falha ao inicializar cliente QRCode:', error.message);
+    process.exit(1);
+  });
 });

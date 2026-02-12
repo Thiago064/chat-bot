@@ -31,17 +31,21 @@ npm install
 cp .env.example .env
 ```
 
-3. (Opcional) Ajuste a porta no `.env`:
+3. Ajuste o `.env`:
 
 - `PORT`: porta local (padrão `3000`)
+- `CHROME_EXECUTABLE_PATH` (opcional): caminho absoluto do Chrome/Chromium. Útil no Windows quando o Puppeteer não encontra o navegador automaticamente.
 
 ## Executando (QRCode)
 
 ```bash
+npm run setup:chrome
 npm run start:qrcode
 ```
 
 Ao iniciar, o terminal exibirá um QRCode. Escaneie com o WhatsApp para conectar o bot.
+
+Se aparecer erro como `Could not find Chrome`, execute `npm run setup:chrome` novamente ou configure `CHROME_EXECUTABLE_PATH` no `.env` com o caminho do seu `chrome.exe`.
 
 > Observação: os scripts usam `--no-deprecation` para ocultar o aviso `[DEP0040] punycode`, que é emitido por dependência interna do ecossistema do WhatsApp Web no Node.js atual.
 
