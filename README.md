@@ -1,6 +1,8 @@
 # WhatsApp Lead Bot (triagem de clientes)
 
-Bot para WhatsApp com foco em triagem de clientes em potencial. Quando recebe uma mensagem de um contato, responde com:
+Bot para WhatsApp com foco em triagem de clientes em potencial, operando **somente por conexão via QRCode** (WhatsApp Web).
+
+Quando recebe uma mensagem de um contato, responde com:
 
 1. Saudação básica.
 2. Menu com três opções:
@@ -29,40 +31,22 @@ npm install
 cp .env.example .env
 ```
 
-3. Configure o modo de conexão no `.env`:
+3. (Opcional) Ajuste a porta no `.env`:
 
-- `WHATSAPP_CONNECTION_MODE=cloud` para usar WhatsApp Cloud API
-- `WHATSAPP_CONNECTION_MODE=qrcode` para conectar via QRCode (WhatsApp Web)
+- `PORT`: porta local (padrão `3000`)
 
-### Variáveis para modo Cloud API
-
-Necessárias apenas quando `WHATSAPP_CONNECTION_MODE=cloud`:
-
-- `WHATSAPP_VERIFY_TOKEN`: token para validação do webhook
-- `WHATSAPP_ACCESS_TOKEN`: token da Cloud API
-- `WHATSAPP_PHONE_NUMBER_ID`: ID do número de WhatsApp na Meta
-
-## Executando
-
-### Modo Cloud API
-
-```bash
-npm run start:cloud
-```
-
-### Modo QRCode (conectar WhatsApp direto no bot)
+## Executando (QRCode)
 
 ```bash
 npm run start:qrcode
 ```
 
-Ao iniciar em modo QRCode, o terminal exibirá um QRCode. Escaneie com o WhatsApp para conectar.
+Ao iniciar, o terminal exibirá um QRCode. Escaneie com o WhatsApp para conectar o bot.
 
 ## Endpoints
 
-- `GET /webhook`: verificação do webhook pela Meta (somente no modo cloud)
-- `POST /webhook`: recebimento das mensagens (somente no modo cloud)
-- `GET /health`: healthcheck (retorna o modo ativo: `cloud` ou `qrcode`)
+- `GET /health`: healthcheck
+- `GET /webhook` e `POST /webhook`: retornam mensagem informando que webhook está desabilitado, pois esta versão opera apenas com QRCode
 
 ## Fluxo de conversa
 

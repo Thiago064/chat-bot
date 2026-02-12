@@ -1,35 +1,16 @@
 const express = require('express');
-const axios = require('axios');
 const dotenv = require('dotenv');
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-const {
-  PORT = 3000,
-  WHATSAPP_CONNECTION_MODE = 'cloud',
-  WHATSAPP_VERIFY_TOKEN,
-  WHATSAPP_ACCESS_TOKEN,
-  WHATSAPP_PHONE_NUMBER_ID,
-} = process.env;
-
-const isCloudMode = WHATSAPP_CONNECTION_MODE === 'cloud';
-const isQrCodeMode = WHATSAPP_CONNECTION_MODE === 'qrcode';
-
-if (!isCloudMode && !isQrCodeMode) {
-  console.error('WHATSAPP_CONNECTION_MODE inválido. Use "cloud" ou "qrcode".');
-  process.exit(1);
-}
-
-if (isCloudMode && (!WHATSAPP_VERIFY_TOKEN || !WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID)) {
-  console.error('Variáveis de ambiente faltando para modo cloud. Confira o arquivo .env.example');
-  process.exit(1);
-}
+const { PORT = 3000 } = process.env;
 
 const sessions = new Map();
-let qrClient = null;
 
 const PURPOSES = {
   '1': 'Projeto em andamento',
@@ -85,35 +66,6 @@ function buildClosingMessage() {
   ].join('\n');
 }
 
-async function sendWhatsAppMessage(to, message) {
-  if (isQrCodeMode) {
-    if (!qrClient) {
-      throw new Error('Cliente WhatsApp QRCode ainda não inicializado.');
-    }
-
-    const chatId = to.includes('@') ? to : `${to}@c.us`;
-    await qrClient.sendMessage(chatId, message);
-    return;
-  }
-
-  const url = `https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
-
-  await axios.post(
-    url,
-    {
-      messaging_product: 'whatsapp',
-      to,
-      text: { body: message },
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-    }
-  );
-}
-
 function normalizeIncomingText(text = '') {
   return text.trim().toLowerCase();
 }
@@ -124,6 +76,18 @@ function getSession(waId) {
 
 function setSession(waId, data) {
   sessions.set(waId, { ...getSession(waId), ...data });
+}
+
+const qrClient = new Client({
+  authStrategy: new LocalAuth({ clientId: 'chat-bot' }),
+  puppeteer: {
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  },
+});
+
+async function sendWhatsAppMessage(to, message) {
+  const chatId = to.includes('@') ? to : `${to}@c.us`;
+  await qrClient.sendMessage(chatId, message);
 }
 
 async function processConversation(waId, text, profileName = '') {
@@ -157,118 +121,47 @@ async function processConversation(waId, text, profileName = '') {
   await sendWhatsAppMessage(waId, 'Se quiser iniciar um novo atendimento, envie *menu*.');
 }
 
-async function handleIncomingCloudMessage(messageData, contact = {}) {
-  const waId = messageData.from;
-  const text = normalizeIncomingText(messageData?.text?.body);
-  const profileName = contact?.profile?.name || '';
-
-  await processConversation(waId, text, profileName);
-}
-
-function initQrCodeMode() {
-  const { Client, LocalAuth } = require('whatsapp-web.js');
-  const qrcode = require('qrcode-terminal');
-
-  qrClient = new Client({
-    authStrategy: new LocalAuth({ clientId: 'chat-bot' }),
-    puppeteer: {
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    },
-  });
-
-  qrClient.on('qr', (qr) => {
-    console.log('Escaneie o QRCode abaixo com seu WhatsApp para conectar o bot:');
-    qrcode.generate(qr, { small: true });
-  });
-
-  qrClient.on('ready', () => {
-    console.log('WhatsApp conectado com sucesso via QRCode.');
-  });
-
-  qrClient.on('message', async (message) => {
-    try {
-      if (message.fromMe || message.from.includes('@g.us')) {
-        return;
-      }
-
-      const waId = message.from.replace('@c.us', '');
-      const text = normalizeIncomingText(message.body || '');
-      const profileName = message._data?.notifyName || message._data?.pushname || '';
-
-      await processConversation(waId, text, profileName);
-    } catch (error) {
-      console.error('Erro ao processar mensagem em modo qrcode:', error.message);
-    }
-  });
-
-  qrClient.initialize();
-}
-
-app.get('/webhook', (req, res) => {
-  if (isQrCodeMode) {
-    return res.status(200).send('Modo QRCode ativo: endpoint webhook desabilitado.');
-  }
-
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === WHATSAPP_VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
-  }
-
-  return res.sendStatus(403);
+qrClient.on('qr', (qr) => {
+  console.log('Escaneie o QRCode abaixo com seu WhatsApp para conectar o bot:');
+  qrcode.generate(qr, { small: true });
 });
 
-app.post('/webhook', async (req, res) => {
+qrClient.on('ready', () => {
+  console.log('WhatsApp conectado com sucesso via QRCode.');
+});
+
+qrClient.on('message', async (message) => {
   try {
-    if (isQrCodeMode) {
-      return res.status(200).json({ ok: true, message: 'Modo QRCode ativo. Webhook ignorado.' });
+    if (message.fromMe || message.from.includes('@g.us')) {
+      return;
     }
 
-    const entries = req.body?.entry || [];
+    const waId = message.from.replace('@c.us', '');
+    const text = normalizeIncomingText(message.body || '');
+    const profileName = message._data?.notifyName || message._data?.pushname || '';
 
-    for (const entry of entries) {
-      const changes = entry?.changes || [];
-
-      for (const change of changes) {
-        const value = change?.value;
-
-        if (!value?.messages?.length) {
-          continue;
-        }
-
-        const contactsByWaId = new Map((value.contacts || []).map((contact) => [contact.wa_id, contact]));
-
-        for (const message of value.messages) {
-          if (message.type !== 'text') {
-            continue;
-          }
-
-          const contact = contactsByWaId.get(message.from) || value.contacts?.[0];
-          await handleIncomingCloudMessage(message, contact);
-        }
-      }
-    }
-
-    return res.sendStatus(200);
+    await processConversation(waId, text, profileName);
   } catch (error) {
-    console.error('Erro ao processar webhook:', error?.response?.data || error.message);
-    return res.sendStatus(500);
+    console.error('Erro ao processar mensagem em modo qrcode:', error.message);
   }
+});
+
+app.get('/webhook', (_, res) => {
+  return res.status(200).send('Integração via webhook desabilitada. Este bot opera somente com conexão QRCode.');
+});
+
+app.post('/webhook', (_, res) => {
+  return res.status(200).json({ ok: true, message: 'Webhook desabilitado no modo QRCode-only.' });
 });
 
 app.get('/health', (_, res) => {
   res.status(200).json({
     status: 'ok',
-    mode: isQrCodeMode ? 'qrcode' : 'cloud',
+    mode: 'qrcode',
   });
 });
 
 app.listen(PORT, () => {
-  console.log(`Bot de WhatsApp ativo na porta ${PORT} (modo: ${WHATSAPP_CONNECTION_MODE})`);
-
-  if (isQrCodeMode) {
-    initQrCodeMode();
-  }
+  console.log(`Bot de WhatsApp ativo na porta ${PORT} (modo: qrcode)`);
+  qrClient.initialize();
 });
