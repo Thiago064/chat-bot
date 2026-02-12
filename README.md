@@ -45,6 +45,8 @@ npm run start:qrcode
 
 Ao iniciar, o terminal exibirá um QRCode. Escaneie com o WhatsApp para conectar o bot.
 
+Esta versão responde **somente mensagens novas recebidas em conversa direta** (`@c.us`). Grupos, listas/broadcast, canais e status são ignorados.
+
 Se aparecer erro como `Could not find Chrome`, execute `npm run setup:chrome` novamente ou configure `CHROME_EXECUTABLE_PATH` no `.env` com o caminho do seu `chrome.exe`.
 
 > Observação: os scripts usam `--no-deprecation` para ocultar o aviso `[DEP0040] punycode`, que é emitido por dependência interna do ecossistema do WhatsApp Web no Node.js atual.

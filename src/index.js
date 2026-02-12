@@ -12,6 +12,8 @@ const { PORT = 3000, CHROME_EXECUTABLE_PATH } = process.env;
 
 const sessions = new Map();
 
+const botStartedAt = Math.floor(Date.now() / 1000);
+
 const PURPOSES = {
   '1': 'Projeto em andamento',
   '2': 'Agendar reunião',
@@ -78,6 +80,31 @@ function setSession(waId, data) {
   sessions.set(waId, { ...getSession(waId), ...data });
 }
 
+
+function shouldHandleIncomingMessage(message) {
+  if (!message || message.fromMe) {
+    return false;
+  }
+
+  const from = message.from || '';
+  const isDirectContact = from.endsWith('@c.us');
+  const isGroup = from.endsWith('@g.us');
+  const isBroadcast = from.includes('@broadcast');
+  const isNewsletter = from.endsWith('@newsletter');
+  const hasTextBody = typeof message.body === 'string' && message.body.trim().length > 0;
+  const isNewMessage = Number(message.timestamp || 0) >= botStartedAt;
+
+  if (!isDirectContact || isGroup || isBroadcast || isNewsletter) {
+    return false;
+  }
+
+  if (!hasTextBody || !isNewMessage) {
+    return false;
+  }
+
+  return true;
+}
+
 const qrClient = new Client({
   authStrategy: new LocalAuth({ clientId: 'chat-bot' }),
   puppeteer: {
@@ -133,7 +160,7 @@ qrClient.on('ready', () => {
 
 qrClient.on('message', async (message) => {
   try {
-    if (message.fromMe || message.from.includes('@g.us')) {
+    if (!shouldHandleIncomingMessage(message)) {
       return;
     }
 
