@@ -1,17 +1,35 @@
 {
   "name": "whatsapp-lead-bot",
   "version": "1.0.0",
-  "description": "Bot de triagem de contatos no WhatsApp usando WhatsApp Cloud API",
+  "description": "Bot de triagem de contatos no WhatsApp com conexão via QRCode",
   "main": "src/index.js",
+  "bin": "src/index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
-    "check": "node --check src/index.js"
+    "start": "node --no-deprecation src/index.js",
+    "dev": "node --no-deprecation --watch src/index.js",
+    "check": "node --check src/index.js",
+    "start:qrcode": "node --no-deprecation src/index.js",
+    "setup:chrome": "npx puppeteer browsers install chrome",
+    "build:exe": "pkg . --targets node18-win-x64 --output dist/whatsapp-lead-bot.exe"
   },
   "dependencies": {
-    "axios": "^1.7.9",
     "dotenv": "^16.4.7",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  },
+  "pkg": {
+    "assets": [
+      "node_modules/whatsapp-web.js/**/*",
+      "node_modules/qrcode-terminal/**/*",
+      "node_modules/puppeteer-core/**/*"
+    ],
+    "scripts": [
+      "src/index.js"
+    ]
   }
 }

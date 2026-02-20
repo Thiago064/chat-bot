@@ -1,31 +1,39 @@
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const express = require('express');
-const axios = require('axios');
 const dotenv = require('dotenv');
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
 
-dotenv.config();
+const isPackagedExecutable = typeof process.pkg !== 'undefined';
+const runtimeDir = isPackagedExecutable ? path.dirname(process.execPath) : process.cwd();
+const envPath = path.join(runtimeDir, '.env');
+
+dotenv.config({ path: fs.existsSync(envPath) ? envPath : undefined });
 
 const app = express();
 app.use(express.json());
 
 const {
   PORT = 3000,
-  WHATSAPP_VERIFY_TOKEN,
-  WHATSAPP_ACCESS_TOKEN,
-  WHATSAPP_PHONE_NUMBER_ID,
+  CHROME_EXECUTABLE_PATH,
+  BOT_DATA_DIR = path.join(os.homedir(), '.whatsapp-lead-bot'),
 } = process.env;
 
-if (!WHATSAPP_VERIFY_TOKEN || !WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
-  console.error('Variáveis de ambiente faltando. Confira o arquivo .env.example');
-  process.exit(1);
-}
-
 const sessions = new Map();
+const botStartedAt = Math.floor(Date.now() / 1000);
+const MAX_INIT_RETRIES = 3;
+const RETRY_DELAY_MS = 3000;
 
 const PURPOSES = {
   '1': 'Projeto em andamento',
   '2': 'Agendar reunião',
   '3': 'Solicitar orçamento',
 };
+
+const authDataPath = path.join(BOT_DATA_DIR, 'auth');
+fs.mkdirSync(authDataPath, { recursive: true });
 
 function buildMainMenu(name = '') {
   const greetingName = name ? `, ${name}` : '';
@@ -75,25 +83,6 @@ function buildClosingMessage() {
   ].join('\n');
 }
 
-async function sendWhatsAppMessage(to, message) {
-  const url = `https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
-
-  await axios.post(
-    url,
-    {
-      messaging_product: 'whatsapp',
-      to,
-      text: { body: message },
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-    }
-  );
-}
-
 function normalizeIncomingText(text = '') {
   return text.trim().toLowerCase();
 }
@@ -106,13 +95,46 @@ function setSession(waId, data) {
   sessions.set(waId, { ...getSession(waId), ...data });
 }
 
-async function handleIncomingMessage(messageData, contact = {}) {
-  const waId = messageData.from;
-  const text = normalizeIncomingText(messageData?.text?.body);
+function shouldHandleIncomingMessage(message) {
+  if (!message || message.fromMe) {
+    return false;
+  }
 
+  const from = message.from || '';
+  const isDirectContact = from.endsWith('@c.us');
+  const isGroup = from.endsWith('@g.us');
+  const isBroadcast = from.includes('@broadcast');
+  const isNewsletter = from.endsWith('@newsletter');
+  const hasTextBody = typeof message.body === 'string' && message.body.trim().length > 0;
+  const isNewMessage = Number(message.timestamp || 0) >= botStartedAt;
+
+  if (!isDirectContact || isGroup || isBroadcast || isNewsletter) {
+    return false;
+  }
+
+  if (!hasTextBody || !isNewMessage) {
+    return false;
+  }
+
+  return true;
+}
+
+const qrClient = new Client({
+  authStrategy: new LocalAuth({ clientId: 'chat-bot', dataPath: authDataPath }),
+  puppeteer: {
+    executablePath: CHROME_EXECUTABLE_PATH || undefined,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  },
+});
+
+async function sendWhatsAppMessage(to, message) {
+  const chatId = to.includes('@') ? to : `${to}@c.us`;
+  await qrClient.sendMessage(chatId, message);
+}
+
+async function processConversation(waId, text, profileName = '') {
   if (!waId || !text) return;
 
-  const profileName = contact?.profile?.name || '';
   const session = getSession(waId);
 
   if (text === 'menu' || session.state === 'NEW') {
@@ -133,7 +155,7 @@ async function handleIncomingMessage(messageData, contact = {}) {
   }
 
   if (session.state === 'AWAITING_DETAILS') {
-    setSession(waId, { details: messageData?.text?.body, state: 'DONE' });
+    setSession(waId, { details: text, state: 'DONE' });
     await sendWhatsAppMessage(waId, buildClosingMessage());
     return;
   }
@@ -141,46 +163,104 @@ async function handleIncomingMessage(messageData, contact = {}) {
   await sendWhatsAppMessage(waId, 'Se quiser iniciar um novo atendimento, envie *menu*.');
 }
 
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === WHATSAPP_VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
-  }
-
-  return res.sendStatus(403);
+qrClient.on('qr', (qr) => {
+  console.log('Escaneie o QRCode abaixo com seu WhatsApp para conectar o bot:');
+  qrcode.generate(qr, { small: true });
 });
 
-app.post('/webhook', async (req, res) => {
+qrClient.on('ready', () => {
+  console.log('WhatsApp conectado com sucesso via QRCode.');
+});
+
+qrClient.on('auth_failure', (msg) => {
+  console.error('Falha de autenticação do WhatsApp Web:', msg);
+});
+
+qrClient.on('disconnected', (reason) => {
+  console.warn('Cliente WhatsApp desconectado:', reason);
+});
+
+qrClient.on('message', async (message) => {
   try {
-    const entry = req.body?.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const value = changes?.value;
-
-    if (!value?.messages?.length) {
-      return res.sendStatus(200);
+    if (!shouldHandleIncomingMessage(message)) {
+      return;
     }
 
-    const message = value.messages[0];
-    const contact = value.contacts?.[0];
+    const waId = message.from.replace('@c.us', '');
+    const text = normalizeIncomingText(message.body || '');
+    const profileName = message._data?.notifyName || message._data?.pushname || '';
 
-    if (message.type === 'text') {
-      await handleIncomingMessage(message, contact);
-    }
-
-    return res.sendStatus(200);
+    await processConversation(waId, text, profileName);
   } catch (error) {
-    console.error('Erro ao processar webhook:', error?.response?.data || error.message);
-    return res.sendStatus(500);
+    console.error('Erro ao processar mensagem em modo qrcode:', error.message);
   }
+});
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRecoverableInitError(error) {
+  const message = error?.message || '';
+
+  return (
+    message.includes('Execution context was destroyed') ||
+    message.includes('Target closed') ||
+    message.includes('Navigation failed') ||
+    message.includes('Protocol error')
+  );
+}
+
+async function initializeQrClientWithRetry() {
+  for (let attempt = 1; attempt <= MAX_INIT_RETRIES; attempt += 1) {
+    try {
+      await qrClient.initialize();
+      return;
+    } catch (error) {
+      const isChromeMissing = error?.message?.includes('Could not find Chrome');
+      const canRetry = isRecoverableInitError(error) && attempt < MAX_INIT_RETRIES;
+
+      if (isChromeMissing) {
+        console.error('Chrome não encontrado para o whatsapp-web.js.');
+        console.error('Execute: npx puppeteer browsers install chrome');
+        console.error('Ou defina CHROME_EXECUTABLE_PATH no .env com o caminho do chrome.exe.');
+      }
+
+      console.error(`Falha ao inicializar cliente QRCode (tentativa ${attempt}/${MAX_INIT_RETRIES}):`, error.message);
+
+      if (!canRetry) {
+        throw error;
+      }
+
+      console.log(`Tentando novamente em ${RETRY_DELAY_MS / 1000}s...`);
+      await wait(RETRY_DELAY_MS);
+    }
+  }
+}
+
+app.get('/webhook', (_, res) => {
+  return res.status(200).send('Integração via webhook desabilitada. Este bot opera somente com conexão QRCode.');
+});
+
+app.post('/webhook', (_, res) => {
+  return res.status(200).json({ ok: true, message: 'Webhook desabilitado no modo QRCode-only.' });
 });
 
 app.get('/health', (_, res) => {
-  res.status(200).json({ status: 'ok' });
+  res.status(200).json({
+    status: 'ok',
+    mode: 'qrcode',
+    dataDir: BOT_DATA_DIR,
+  });
 });
 
 app.listen(PORT, () => {
-  console.log(`Bot de WhatsApp ativo na porta ${PORT}`);
+  console.log(`Bot de WhatsApp ativo na porta ${PORT} (modo: qrcode)`);
+  console.log(`Diretório de dados do bot: ${BOT_DATA_DIR}`);
+  console.log(`Diretório de runtime: ${runtimeDir}`);
+
+  initializeQrClientWithRetry().catch((error) => {
+    console.error('Erro fatal ao inicializar cliente QRCode:', error.message);
+    process.exit(1);
+  });
 });
